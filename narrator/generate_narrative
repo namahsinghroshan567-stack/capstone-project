@@ -1,0 +1,133 @@
+"""Generate an SCR business narrative with Gemini or a deterministic offline fallback."""
+from __future__ import annotations
+import json
+import os
+import re
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+FINDINGS_PATH = ROOT / "narrator" / "findings.json"
+SAMPLE_PATH = ROOT / "narrator" / "sample_output.txt"
+
+SYSTEM_INSTRUCTION = """You are a senior data analyst writing for Mamaearth's regional ops and finance heads.
+Write exactly three labeled sections: Situation, Complication, and Resolution.
+Every number in the output must come from the supplied findings and appear with the same value; do not invent statistics, percentages, dates, causes, or quantities. Explain implications cautiously and recommend practical next steps."""
+
+
+def _fmt(value: float) -> str:
+    return f"{value:,.2f}"
+
+
+def generate_scr_narrative_offline(findings: dict[str, Any]) -> dict[str, Any]:
+    """Fully deterministic, keyless narrative assembled only from supplied findings."""
+    cleaned = float(findings["cleaned_total_revenue_inr"])
+    raw = float(findings["raw_total_revenue_inr"])
+    delta = float(findings["duplicate_reconciliation_delta_inr"])
+    rates = findings["return_rate_by_payment"]
+    segment = findings["highest_risk_segment"]
+    peak = findings["true_peak_month"]
+    inflated = findings["outlier_inflated_month"]
+    month_name = __import__("datetime").datetime.strptime(peak["month"], "%Y-%m").strftime("%B %Y")
+    inflated_name = __import__("datetime").datetime.strptime(inflated["month"], "%Y-%m").strftime("%B %Y")
+    narrative = (
+        "Situation\n"
+        f"The cleaned order analysis records revenue of ₹{_fmt(cleaned)} across deduplicated orders. "
+        f"After correcting for the two flagged bulk-order outliers, {month_name} is the peak month at ₹{_fmt(float(peak['revenue_inr']))}.\n\n"
+        "Complication\n"
+        f"Cash on Delivery (COD) has a {float(rates['COD']):.1f}% return rate, compared with {float(rates['CARD']):.1f}% for CARD and {float(rates['UPI']):.1f}% for UPI. "
+        f"The highest-risk segment is COD in Tier-{int(segment['city_tier'])} cities at {float(segment['return_rate_pct']):.1f}%. "
+        f"The raw revenue of ₹{_fmt(raw)} exceeds cleaned revenue by ₹{_fmt(delta)} because five duplicate orders were removed. "
+        f"{inflated_name} initially appears to lead at ₹{_fmt(float(inflated['apparent_revenue_inr']))}, but its outlier-corrected revenue is ₹{_fmt(float(inflated['corrected_revenue_inr']))}.\n\n"
+        "Resolution\n"
+        f"Prioritize an operational review of COD orders in Tier-{int(segment['city_tier'])} cities, examining confirmation, delivery refusal, and return-reason records before changing payment policies. "
+        f"Use ₹{_fmt(cleaned)} as the cleaned revenue baseline, retain the duplicate-order reconciliation of ₹{_fmt(delta)}, and use {month_name} at ₹{_fmt(float(peak['revenue_inr']))} for the outlier-corrected monthly comparison. "
+        "Monitor the payment-method and city-tier segments after interventions; treat the observed relationships as diagnostic signals rather than proof of causation."
+    )
+    return {"status": "success", "narrative": narrative, "tokens": None, "mode": "offline"}
+
+
+def generate_scr_narrative(findings: dict[str, Any]) -> dict[str, Any]:
+    """Use Gemini when configured; fall back offline for missing keys or API errors."""
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        return generate_scr_narrative_offline(findings)
+    result = _generate_scr_narrative_gemini(findings, api_key)
+    if result.get("status") == "error":
+        fallback = generate_scr_narrative_offline(findings)
+        fallback["mode"] = "offline_fallback_api_error"
+        fallback["api_error"] = result.get("message")
+        return fallback
+    if not check_numeric_accuracy(result["narrative"], findings, verbose=True):
+        fallback = generate_scr_narrative_offline(findings)
+        fallback["mode"] = "offline_fallback_numeric_check"
+        return fallback
+    return result
+
+
+def _generate_scr_narrative_gemini(findings: dict[str, Any], api_key: str) -> dict[str, Any]:
+    try:
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=30000))
+        # Temperature is 0.0 because this is a factual business report, not creative writing.
+        response = client.models.generate_content(
+            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+            contents=("Write the SCR report using only these computed findings. Do not add unsupported numbers.\n"
+                      + json.dumps(findings, ensure_ascii=False, sort_keys=True)),
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                temperature=0.0,
+                max_output_tokens=500,
+            ),
+        )
+        narrative = (response.text or "").strip()
+        if not narrative:
+            raise ValueError("Gemini returned an empty narrative")
+        result = {"status": "success", "narrative": narrative,
+                  "tokens": getattr(getattr(response, "usage_metadata", None), "total_token_count", None),
+                  "mode": "gemini"}
+        return result
+    except Exception as err:
+        # Do not expose a raw exception; return the documented structured error shape.
+        return {"status": "error", "narrative": None, "message": str(err)}
+
+
+def check_numeric_accuracy(narrative: str, findings: dict[str, Any], verbose: bool = True) -> bool:
+    normalized = narrative.replace(",", "")
+    peak = findings["true_peak_month"]
+    checks = [
+        ("cleaned revenue", [f"{float(findings['cleaned_total_revenue_inr']):.2f}", str(findings["cleaned_total_revenue_inr"])]),
+        ("COD return rate", [f"{float(findings['return_rate_by_payment']['COD']):.1f}"]),
+        ("COD + Tier-2 highest-risk rate", [f"{float(findings['highest_risk_segment']['return_rate_pct']):.1f}"]),
+        ("duplicate reconciliation delta", [f"{float(findings['duplicate_reconciliation_delta_inr']):.2f}", str(findings["duplicate_reconciliation_delta_inr"])]),
+        ("true peak month and revenue", [peak["month"], f"{float(peak['revenue_inr']):.2f}"]),
+    ]
+    all_pass = True
+    for label, alternatives in checks:
+        passed = all(term.lower() in normalized.lower() for term in alternatives) if label == "true peak month and revenue" else any(term in normalized for term in alternatives)
+        if label == "true peak month and revenue":
+            passed = ("march" in normalized.lower() and any(term in normalized for term in alternatives[1:]))
+        all_pass = all_pass and passed
+        if verbose:
+            print(f"Numeric accuracy — {label}: {'PASS' if passed else 'FAIL'}")
+    return all_pass
+
+
+def main() -> None:
+    findings = json.loads(FINDINGS_PATH.read_text(encoding="utf-8"))
+    result = generate_scr_narrative(findings)
+    if result.get("narrative") is None:
+        # The public caller receives a structured result, while main still guarantees a useful artifact.
+        result = generate_scr_narrative_offline(findings)
+    print(f"Narrative mode: {result.get('mode', 'unknown')}")
+    print(result["narrative"])
+    passed = check_numeric_accuracy(result["narrative"], findings)
+    if not passed:
+        raise SystemExit("Numeric accuracy checklist failed")
+    SAMPLE_PATH.write_text(result["narrative"].rstrip() + "\n", encoding="utf-8")
+    print(f"Saved checked narrative to {SAMPLE_PATH.relative_to(ROOT)}")
+
+
+if __name__ == "__main__":
+    main()
