@@ -1,0 +1,8 @@
+Situation
+The cleaned order analysis records revenue of ₹97,358.30 across deduplicated orders. After correcting for the two flagged bulk-order outliers, March 2026 is the peak month at ₹20,318.90.
+
+Complication
+Cash on Delivery (COD) has a 44.4% return rate, compared with 14.7% for CARD and 18.9% for UPI. The highest-risk segment is COD in Tier-2 cities at 54.5%. The raw revenue of ₹99,860.20 exceeds cleaned revenue by ₹2,501.90 because five duplicate orders were removed. January 2026 initially appears to lead at ₹29,582.10, but its outlier-corrected revenue is ₹11,637.10.
+
+Resolution
+Prioritize an operational review of COD orders in Tier-2 cities, examining confirmation, delivery refusal, and return-reason records before changing payment policies. Use ₹97,358.30 as the cleaned revenue baseline, retain the duplicate-order reconciliation of ₹2,501.90, and use March 2026 at ₹20,318.90 for the outlier-corrected monthly comparison. Monitor the payment-method and city-tier segments after interventions; treat the observed relationships as diagnostic signals rather than proof of causation.
