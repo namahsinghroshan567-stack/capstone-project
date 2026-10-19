@@ -1,0 +1,47 @@
+"""Portable standard-library runner for the SQLite layer (no sqlite3 CLI required)."""
+from pathlib import Path
+import re
+import sqlite3
+
+ROOT = Path(__file__).resolve().parents[1]
+DB_PATH = ROOT / "mamaearth.db"
+
+
+def execute_script(connection: sqlite3.Connection, path: Path, report: bool = False) -> None:
+    source = path.read_text(encoding="utf-8")
+    if not report:
+        connection.executescript(source)
+        return
+    # Remove full-line SQL comments, then execute statements one at a time to show each result.
+    source = re.sub(r"(?m)^\s*--.*$", "", source)
+    for index, statement in enumerate((part.strip() for part in source.split(";")), start=1):
+        if not statement:
+            continue
+        cursor = connection.execute(statement)
+        if cursor.description:
+            print(f"\nReport result {index}:")
+            print(" | ".join(column[0] for column in cursor.description))
+            for row in cursor.fetchall():
+                print(" | ".join(str(value) for value in row))
+    connection.commit()
+
+
+def main() -> None:
+    if DB_PATH.exists():
+        DB_PATH.unlink()
+    connection = sqlite3.connect(DB_PATH)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        execute_script(connection, ROOT / "sql" / "schema.sql")
+        execute_script(connection, ROOT / "sql" / "seed_data.sql")
+        print("Loaded row counts:")
+        for table in ("customers", "products", "orders"):
+            print(f"{table}: {connection.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]}")
+        execute_script(connection, ROOT / "sql" / "reports.sql", report=True)
+        print(f"\nSQLite database written to {DB_PATH.name}")
+    finally:
+        connection.close()
+
+
+if __name__ == "__main__":
+    main()
