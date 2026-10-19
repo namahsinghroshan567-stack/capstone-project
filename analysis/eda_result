@@ -1,0 +1,53 @@
+{
+  "monthly_revenue_including_outliers": {
+    "2026-01": 29582.1,
+    "2026-02": 13195.5,
+    "2026-03": 20318.9,
+    "2026-04": 9495.3,
+    "2026-05": 13151.1,
+    "2026-06": 11615.4
+  },
+  "monthly_revenue_excluding_outliers": {
+    "2026-01": 11637.1,
+    "2026-02": 13195.5,
+    "2026-03": 20318.9,
+    "2026-04": 9495.3,
+    "2026-05": 13151.1,
+    "2026-06": 11615.4
+  },
+  "return_rate_by_payment": {
+    "CARD": 14.7,
+    "COD": 44.4,
+    "UPI": 18.9
+  },
+  "outlier_order_ids": [
+    "O0011",
+    "O0098"
+  ],
+  "correlation_matrix": {
+    "rating": {
+      "rating": 1.0,
+      "returned": -0.101483,
+      "discount_pct": 0.04273,
+      "quantity": -0.097987
+    },
+    "returned": {
+      "rating": -0.101483,
+      "returned": 1.0,
+      "discount_pct": -0.088023,
+      "quantity": 0.040627
+    },
+    "discount_pct": {
+      "rating": 0.04273,
+      "returned": -0.088023,
+      "discount_pct": 1.0,
+      "quantity": -0.170423
+    },
+    "quantity": {
+      "rating": -0.097987,
+      "returned": 0.040627,
+      "discount_pct": -0.170423,
+      "quantity": 1.0
+    }
+  }
+}
